@@ -2,10 +2,5 @@
   command = "next build"
   publish = ".next"
 
-[functions]
-  # Story+image generation can take up to ~30s with retries; default is 10s on Netlify free tier
-  # The Free tier max is 30s so we set right at it.
-  "___netlify-server-handler".timeout = 30
-
 [[plugins]]
   package = "@netlify/plugin-nextjs"
