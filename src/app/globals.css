@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap");
+
+:root {
+  --bg: #fafafe;
+  --ink: #0f1b4c;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Subtle dotted background pattern like Scribble & Shine */
+.dot-grid {
+  background-image: radial-gradient(rgba(15, 27, 76, 0.08) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+/* Smooth focus ring */
+:focus-visible {
+  outline: 2px solid #6c5ce7;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
