@@ -1,13 +1,12 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
+const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-flash-latest";
+const TEXT_MODEL_FALLBACK = "gemini-2.0-flash";
 const IMAGE_MODEL =
   process.env.GEMINI_IMAGE_MODEL || "imagen-4.0-fast-generate-001";
 
 if (!API_KEY && process.env.NODE_ENV !== "test") {
-  // We intentionally don't throw at import time so `next build` doesn't fail
-  // when env vars aren't set yet. Routes that call genAI() will throw a friendly error.
   // eslint-disable-next-line no-console
   console.warn(
     "[gemini] GOOGLE_GENERATIVE_AI_API_KEY not set — AI calls will fail until you add it."
@@ -25,25 +24,70 @@ export function genAI() {
 
 export const MODELS = {
   text: TEXT_MODEL,
+  textFallback: TEXT_MODEL_FALLBACK,
   image: IMAGE_MODEL,
 };
+
+/** Detect transient errors worth retrying. */
+function isTransient(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\b(429|500|502|503|504)\b|overloaded|UNAVAILABLE|temporarily|ECONNRESET|ETIMEDOUT/i.test(
+    msg
+  );
+}
+
+/** Sleep helper. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Call Gemini text gen with exponential backoff + model fallback on transient errors. */
+async function generateTextWithRetry(opts: {
+  modelName: string;
+  prompt: string;
+}): Promise<string> {
+  const ai = genAI();
+  const tryOnce = async (m: string) => {
+    const model = ai.getGenerativeModel({
+      model: m,
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: 0.9,
+      },
+    });
+    const result = await model.generateContent(opts.prompt);
+    return result.response.text();
+  };
+
+  const attempts: { model: string; delay: number }[] = [
+    { model: opts.modelName, delay: 0 },
+    { model: opts.modelName, delay: 800 },
+    { model: TEXT_MODEL_FALLBACK, delay: 1500 },
+    { model: TEXT_MODEL_FALLBACK, delay: 3000 },
+  ];
+
+  let lastErr: unknown;
+  for (const a of attempts) {
+    try {
+      if (a.delay) await sleep(a.delay);
+      return await tryOnce(a.model);
+    } catch (err) {
+      lastErr = err;
+      if (!isTransient(err)) throw err;
+      // eslint-disable-next-line no-console
+      console.warn(`[gemini] transient error on ${a.model}, retrying:`, err instanceof Error ? err.message : err);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("Gemini exhausted retries");
+}
 
 /** Generate a multi-page children's story as structured JSON. */
 export async function generateStory(opts: {
   topic: string;
   language: string;
-  ageRange: string; // e.g. "4-6"
-  style?: string; // e.g. "whimsical watercolor"
-  pages?: number; // default 5
+  ageRange: string;
+  style?: string;
+  pages?: number;
 }) {
   const pages = opts.pages ?? 5;
-  const model = genAI().getGenerativeModel({
-    model: MODELS.text,
-    generationConfig: {
-      responseMimeType: "application/json",
-      temperature: 0.9,
-    },
-  });
 
   const prompt = `You are a beloved children's author writing for ages ${opts.ageRange}.
 Write a ${pages}-page illustrated story about: "${opts.topic}".
@@ -60,8 +104,10 @@ Return strict JSON with this shape:
 
 Keep each page's text 2-4 short sentences. Keep it warm, safe, age-appropriate, and joyful. Do NOT include any text characters in the illustration prompts (no letters, words, captions, signs).`;
 
-  const result = await model.generateContent(prompt);
-  const raw = result.response.text();
+  const raw = await generateTextWithRetry({
+    modelName: MODELS.text,
+    prompt,
+  });
   try {
     return JSON.parse(raw);
   } catch {
@@ -93,24 +139,38 @@ export async function generateImage(opts: {
     },
   };
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Imagen error ${res.status}: ${text.slice(0, 300)}`);
+  const delays = [0, 800, 2000];
+  let lastErr: unknown;
+  for (const d of delays) {
+    try {
+      if (d) await sleep(d);
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        const err = new Error(`Imagen error ${res.status}: ${text.slice(0, 300)}`);
+        if (isTransient(err)) {
+          lastErr = err;
+          continue;
+        }
+        throw err;
+      }
+      const data = (await res.json()) as {
+        predictions?: { bytesBase64Encoded?: string; mimeType?: string }[];
+      };
+      const pred = data.predictions?.[0];
+      if (!pred?.bytesBase64Encoded) {
+        throw new Error("Imagen returned no image bytes");
+      }
+      const mime = pred.mimeType ?? "image/png";
+      return `data:${mime};base64,${pred.bytesBase64Encoded}`;
+    } catch (e) {
+      lastErr = e;
+      if (!isTransient(e)) throw e;
+    }
   }
-
-  const data = (await res.json()) as {
-    predictions?: { bytesBase64Encoded?: string; mimeType?: string }[];
-  };
-  const pred = data.predictions?.[0];
-  if (!pred?.bytesBase64Encoded) {
-    throw new Error("Imagen returned no image bytes");
-  }
-  const mime = pred.mimeType ?? "image/png";
-  return `data:${mime};base64,${pred.bytesBase64Encoded}`;
+  throw lastErr instanceof Error ? lastErr : new Error("Imagen exhausted retries");
 }
