@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BackBar } from "@/components/BackBar";
 import { Eraser, Brush, Undo2, Trash2, Download, Save } from "lucide-react";
+import { saveItem } from "@/lib/library";
 
 const COLORS = [
   "#0F1B4C",
@@ -124,20 +125,22 @@ export default function DrawingPage() {
     a.click();
   }
 
-  function saveToLibrary() {
+  async function saveToLibrary() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dataUrl = canvas.toDataURL("image/png");
-    const key = "scribble:library";
-    const prev = JSON.parse(localStorage.getItem(key) || "[]");
-    prev.unshift({
-      id: crypto.randomUUID(),
-      type: "drawing",
-      savedAt: new Date().toISOString(),
-      dataUrl,
-    });
-    localStorage.setItem(key, JSON.stringify(prev.slice(0, 50)));
-    alert("Saved to your library!");
+    try {
+      await saveItem({
+        id: crypto.randomUUID(),
+        type: "drawing",
+        savedAt: new Date().toISOString(),
+        dataUrl,
+      });
+      alert("Saved to your library!");
+    } catch (e) {
+      console.error(e);
+      alert("Could not save — your browser storage may be full.");
+    }
   }
 
   return (

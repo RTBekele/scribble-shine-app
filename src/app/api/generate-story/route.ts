@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { topic, language = "English", ageRange = "4-6", style, pages } = body;
+    const { topic, childName, language = "English", ageRange = "4-6", style, pages } = body;
 
     if (!topic || typeof topic !== "string") {
       return NextResponse.json(
@@ -18,6 +18,7 @@ export async function POST(req: Request) {
 
     const story = await generateStory({
       topic,
+      childName: typeof childName === "string" ? childName.trim() : undefined,
       language,
       ageRange,
       style,

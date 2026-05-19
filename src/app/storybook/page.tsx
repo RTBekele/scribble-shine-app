@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { BackBar } from "@/components/BackBar";
 import { LANGUAGES } from "@/lib/languages";
-import { Wand2, Play, Pause, Save, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { saveItem } from "@/lib/library";
+import { Wand2, Play, Pause, Save, ChevronLeft, ChevronRight, Loader2, User } from "lucide-react";
 
 type Page = { page: number; text: string; illustrationPrompt: string };
 type Story = {
@@ -14,6 +15,7 @@ type Story = {
 
 export default function StorybookPage() {
   const [topic, setTopic] = useState("");
+  const [childName, setChildName] = useState("");
   const [language, setLanguage] = useState("English");
   const [langCode, setLangCode] = useState("en-US");
   const [ageRange, setAgeRange] = useState("4-6");
@@ -24,23 +26,31 @@ export default function StorybookPage() {
   const [current, setCurrent] = useState(0);
   const [speaking, setSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   async function handleGenerate() {
     setError(null);
     setStory(null);
     setImages({});
+    setCurrent(0);
+    setSaveState("idle");
     setLoading(true);
     try {
       const res = await fetch("/api/generate-story", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic, language, ageRange, pages: pageCount }),
+        body: JSON.stringify({
+          topic,
+          childName: childName.trim() || undefined,
+          language,
+          ageRange,
+          pages: pageCount,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Story generation failed");
       const s: Story = data.story;
       setStory(s);
-      setCurrent(0);
 
       // Stream illustrations in parallel
       s.pages.forEach(async (p) => {
@@ -87,19 +97,35 @@ export default function StorybookPage() {
     setSpeaking(false);
   }
 
-  function saveToLibrary() {
+  async function saveToLibrary() {
     if (!story) return;
-    const key = "scribble:library";
-    const prev = JSON.parse(localStorage.getItem(key) || "[]");
-    prev.unshift({
-      id: crypto.randomUUID(),
-      type: "story",
-      savedAt: new Date().toISOString(),
-      story,
-      images,
-    });
-    localStorage.setItem(key, JSON.stringify(prev.slice(0, 50)));
-    alert("Saved to your library!");
+    setSaveState("saving");
+    try {
+      await saveItem({
+        id: crypto.randomUUID(),
+        type: "story",
+        savedAt: new Date().toISOString(),
+        childName: childName.trim() || undefined,
+        story: {
+          title: story.title,
+          language: story.language,
+          pages: story.pages.map((p) => ({
+            page: p.page,
+            text: p.text,
+            illustrationPrompt: p.illustrationPrompt,
+          })),
+        },
+        // Convert numeric keys to strings for IndexedDB
+        images: Object.fromEntries(
+          Object.entries(images).map(([k, v]) => [String(k), v])
+        ),
+      });
+      setSaveState("saved");
+      setTimeout(() => setSaveState("idle"), 2200);
+    } catch (e) {
+      console.error(e);
+      setSaveState("error");
+    }
   }
 
   const page = story?.pages[current];
@@ -112,6 +138,19 @@ export default function StorybookPage() {
         {/* Controls */}
         <div className="bg-soft-card rounded-xl2 shadow-tile p-6 h-fit">
           <label className="block text-sm font-bold text-ink mb-1.5">
+            <span className="inline-flex items-center gap-1.5">
+              <User size={14} /> Star of the story <span className="text-soft-muted font-normal">(optional)</span>
+            </span>
+          </label>
+          <input
+            type="text"
+            value={childName}
+            onChange={(e) => setChildName(e.target.value)}
+            placeholder="e.g. Maya"
+            className="w-full rounded-xl border border-primary-100 bg-soft-bg px-3 py-2 text-sm focus:border-primary-500 focus:bg-white outline-none"
+          />
+
+          <label className="block text-sm font-bold text-ink mt-4 mb-1.5">
             What is the story about?
           </label>
           <textarea
@@ -211,15 +250,31 @@ export default function StorybookPage() {
             </div>
           ) : (
             <div>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-display font-extrabold text-2xl text-ink">
+              <div className="flex items-center justify-between mb-4 gap-3">
+                <h2 className="font-display font-extrabold text-2xl text-ink truncate">
                   {story.title}
                 </h2>
                 <button
                   onClick={saveToLibrary}
-                  className="inline-flex items-center gap-2 text-sm font-bold text-primary-600 hover:bg-primary-50 px-3 py-2 rounded-full"
+                  disabled={saveState === "saving"}
+                  className={`inline-flex items-center gap-2 text-sm font-bold px-3 py-2 rounded-full whitespace-nowrap transition ${
+                    saveState === "saved"
+                      ? "bg-accent-green text-white"
+                      : saveState === "error"
+                      ? "bg-accent-pink text-white"
+                      : "text-primary-600 hover:bg-primary-50"
+                  }`}
                 >
-                  <Save size={16} /> Save
+                  {saveState === "saving" ? (
+                    <Loader2 className="animate-spin" size={16} />
+                  ) : (
+                    <Save size={16} />
+                  )}
+                  {saveState === "saved"
+                    ? "Saved!"
+                    : saveState === "error"
+                    ? "Save failed"
+                    : "Save"}
                 </button>
               </div>
 

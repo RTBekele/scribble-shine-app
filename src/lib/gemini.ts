@@ -82,6 +82,7 @@ async function generateTextWithRetry(opts: {
 /** Generate a multi-page children's story as structured JSON. */
 export async function generateStory(opts: {
   topic: string;
+  childName?: string;
   language: string;
   ageRange: string;
   style?: string;
@@ -89,8 +90,13 @@ export async function generateStory(opts: {
 }) {
   const pages = opts.pages ?? 5;
 
+  const namedLine = opts.childName
+    ? `The main character is a child named ${opts.childName}. Use this name throughout the story so it feels personal.`
+    : "";
+
   const prompt = `You are a beloved children's author writing for ages ${opts.ageRange}.
 Write a ${pages}-page illustrated story about: "${opts.topic}".
+${namedLine}
 Write the story entirely in ${opts.language}. The illustration prompts must always be in English (for the image model) and should match the "${opts.style ?? "soft watercolor children's book"}" style.
 
 Return strict JSON with this shape:
