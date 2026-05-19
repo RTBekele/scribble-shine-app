@@ -2,28 +2,39 @@
 
 import { useState } from "react";
 import { BackBar } from "@/components/BackBar";
-import { Palette, Loader2, Download, FileText } from "lucide-react";
+import { saveItem } from "@/lib/library";
+import { Palette, Loader2, Download, FileText, User, Save } from "lucide-react";
 
 export default function ColorBuddyPage() {
   const [subject, setSubject] = useState("");
+  const [childName, setChildName] = useState("");
   const [ageRange, setAgeRange] = useState("4-7");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
+  const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   async function handleGenerate() {
     setError(null);
     setImageDataUrl(null);
+    setExpandedPrompt(null);
+    setSaveState("idle");
     setLoading(true);
     try {
       const res = await fetch("/api/generate-coloring", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject, ageRange }),
+        body: JSON.stringify({
+          subject,
+          childName: childName.trim() || undefined,
+          ageRange,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not generate");
       setImageDataUrl(data.imageDataUrl);
+      setExpandedPrompt(data.expandedPrompt || null);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
@@ -31,11 +42,17 @@ export default function ColorBuddyPage() {
     }
   }
 
+  function fileBase() {
+    const who = childName.trim() ? `${childName.trim()}_` : "";
+    const what = subject.slice(0, 20).replace(/\s+/g, "_");
+    return `coloring-${who}${what || "page"}`;
+  }
+
   function downloadPng() {
     if (!imageDataUrl) return;
     const a = document.createElement("a");
     a.href = imageDataUrl;
-    a.download = `coloring-${subject.slice(0, 20).replace(/\s+/g, "_")}.png`;
+    a.download = `${fileBase()}.png`;
     a.click();
   }
 
@@ -45,7 +62,6 @@ export default function ColorBuddyPage() {
     const pdf = new jsPDF({ unit: "pt", format: "letter" });
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
-    // fit image with margin
     const margin = 36;
     pdf.addImage(
       imageDataUrl,
@@ -57,7 +73,26 @@ export default function ColorBuddyPage() {
       undefined,
       "FAST"
     );
-    pdf.save(`coloring-${subject.slice(0, 20).replace(/\s+/g, "_")}.pdf`);
+    pdf.save(`${fileBase()}.pdf`);
+  }
+
+  async function saveToLibrary() {
+    if (!imageDataUrl) return;
+    setSaveState("saving");
+    try {
+      await saveItem({
+        id: crypto.randomUUID(),
+        type: "drawing",
+        savedAt: new Date().toISOString(),
+        title: `Coloring: ${subject}${childName.trim() ? ` (for ${childName.trim()})` : ""}`,
+        dataUrl: imageDataUrl,
+      });
+      setSaveState("saved");
+      setTimeout(() => setSaveState("idle"), 2200);
+    } catch (e) {
+      console.error(e);
+      setSaveState("error");
+    }
   }
 
   return (
@@ -67,6 +102,19 @@ export default function ColorBuddyPage() {
       <section className="mx-auto max-w-6xl px-6 md:px-10 pb-16 grid lg:grid-cols-[360px_1fr] gap-8">
         <div className="bg-soft-card rounded-xl2 shadow-tile p-6 h-fit">
           <label className="block text-sm font-bold text-ink mb-1.5">
+            <span className="inline-flex items-center gap-1.5">
+              <User size={14} /> Name <span className="text-soft-muted font-normal">(optional)</span>
+            </span>
+          </label>
+          <input
+            type="text"
+            value={childName}
+            onChange={(e) => setChildName(e.target.value)}
+            placeholder="e.g. Maya"
+            className="w-full rounded-xl border border-primary-100 bg-soft-bg px-3 py-2 text-sm focus:border-primary-500 focus:bg-white outline-none"
+          />
+
+          <label className="block text-sm font-bold text-ink mt-4 mb-1.5">
             What do you want to color?
           </label>
           <textarea
@@ -114,20 +162,53 @@ export default function ColorBuddyPage() {
           ) : null}
 
           {imageDataUrl ? (
-            <div className="grid grid-cols-2 gap-3 mt-5">
-              <button
-                onClick={downloadPng}
-                className="inline-flex items-center justify-center gap-2 bg-primary-50 text-primary-700 font-bold py-2.5 rounded-xl text-sm"
-              >
-                <Download size={16} /> PNG
-              </button>
-              <button
-                onClick={downloadPdf}
-                className="inline-flex items-center justify-center gap-2 bg-primary-50 text-primary-700 font-bold py-2.5 rounded-xl text-sm"
-              >
-                <FileText size={16} /> PDF
-              </button>
-            </div>
+            <>
+              <div className="grid grid-cols-3 gap-2 mt-5">
+                <button
+                  onClick={downloadPng}
+                  className="inline-flex items-center justify-center gap-1.5 bg-primary-50 text-primary-700 font-bold py-2.5 rounded-xl text-sm"
+                >
+                  <Download size={14} /> PNG
+                </button>
+                <button
+                  onClick={downloadPdf}
+                  className="inline-flex items-center justify-center gap-1.5 bg-primary-50 text-primary-700 font-bold py-2.5 rounded-xl text-sm"
+                >
+                  <FileText size={14} /> PDF
+                </button>
+                <button
+                  onClick={saveToLibrary}
+                  disabled={saveState === "saving"}
+                  className={`inline-flex items-center justify-center gap-1.5 font-bold py-2.5 rounded-xl text-sm transition ${
+                    saveState === "saved"
+                      ? "bg-accent-green text-white"
+                      : saveState === "error"
+                      ? "bg-accent-pink text-white"
+                      : "bg-primary text-white"
+                  }`}
+                >
+                  {saveState === "saving" ? (
+                    <Loader2 className="animate-spin" size={14} />
+                  ) : (
+                    <Save size={14} />
+                  )}
+                  {saveState === "saved"
+                    ? "Saved!"
+                    : saveState === "error"
+                    ? "Failed"
+                    : "Save"}
+                </button>
+              </div>
+
+              {expandedPrompt ? (
+                <details className="mt-4 text-xs text-soft-muted">
+                  <summary className="cursor-pointer font-bold hover:text-primary-600">
+                    What was drawn (AI scene description)
+                  </summary>
+                  <p className="mt-2 leading-relaxed">{expandedPrompt}</p>
+                </details>
+              ) : null}
+            </>
           ) : null}
         </div>
 

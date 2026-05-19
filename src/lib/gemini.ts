@@ -121,6 +121,56 @@ Keep each page's text 2-4 short sentences. Keep it warm, safe, age-appropriate, 
   }
 }
 
+/** Expand a vague subject ("princess", "dinosaur", "Maya as a fairy")
+ *  into a vivid one-sentence scene description that Imagen can render reliably.
+ *  Returns plain text (no JSON wrapper). */
+export async function expandColoringSubject(opts: {
+  subject: string;
+  childName?: string;
+  ageRange?: string;
+}): Promise<string> {
+  const ai = genAI();
+  const name = opts.childName?.trim();
+  const ageBit = opts.ageRange ? `for ages ${opts.ageRange}` : "";
+
+  const prompt = `Expand this child\'s coloring-page idea into ONE vivid, specific visual sentence (max 35 words) ${ageBit}.
+Idea: "${opts.subject}"${name ? `\nThe child being drawn is named ${name}. Make the main character clearly a ${name}-ish child character.` : ""}
+
+Rules for the description:
+- Be concrete: name the character, their pose, costume, props, and setting.
+- Friendly, warm, kid-safe. No scary, violent, or mature content.
+- Do NOT mention any text, words, letters, captions, or signs to be drawn.
+- Output ONLY the sentence, no preamble or quotes.`;
+
+  const tryOnce = async (m: string) => {
+    const model = ai.getGenerativeModel({
+      model: m,
+      generationConfig: { temperature: 0.85 },
+    });
+    const r = await model.generateContent(prompt);
+    return r.response.text().trim().replace(/^["\'\u201c]|["\'\u201d]$/g, "");
+  };
+
+  const attempts = [
+    { m: MODELS.text, d: 0 },
+    { m: MODELS.text, d: 800 },
+    { m: TEXT_MODEL_FALLBACK, d: 1500 },
+  ];
+  let lastErr: unknown;
+  for (const a of attempts) {
+    try {
+      if (a.d) await sleep(a.d);
+      const out = await tryOnce(a.m);
+      if (out && out.length > 8) return out;
+    } catch (e) {
+      lastErr = e;
+      if (!isTransient(e)) throw e;
+    }
+  }
+  // Last resort: build a reasonable prompt locally
+  return `${name ? `A child named ${name} as ` : "A friendly "}${opts.subject}, drawn as a kid-friendly cartoon character in a cheerful setting.`;
+}
+
 /**
  * Generate an image with Imagen via the Generative Language REST API.
  * Returns a base64-encoded PNG (data URL).
